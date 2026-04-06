@@ -150,53 +150,9 @@ For each qualifying PR, extract:
 - Author login
 - PR URL
 
-**Jira ticket extraction:**
-
-For each PR, attempt to extract a Jira ticket key by scanning the PR title for the pattern `[ON-XXXX]` (where ON is the `{jira_project}` key and XXXX is one or more digits). If found, store the key (e.g. `ON-1111`) alongside that PR.
-
-If no ticket key can be extracted from a PR's title, prompt the user:
-
-```
-Could not find a Jira ticket in the title of PR #{number}: "{title}"
-Enter the Jira ticket key (e.g. ON-1111), or press enter to skip:
-```
-
-If the user provides a key, store it with that PR. If they press enter, mark that PR as having no associated ticket.
-
-Store the full list of extracted ticket keys (deduplicated) as `{jira_tickets}`.
-
 Derive `{repo_name}` by taking the part of `{repo}` after the `/` (e.g. `owner/my-service` → `my-service`).
 
-Prompt the user for the following fields:
-
-```
-Additional revert steps beyond rolling back to {current_tag}? (e.g. db rollback, env update)
-Press enter to skip:
-```
-
-```
-Monitoring and validation strategy?
-(e.g. Test existing scripts on production, monitor through FullStory)
-```
-
-Store the full structured release body as `{jira_release_body}` for use in Stage 11.5:
-
-```
-Service Name:
-[{repo_name}]
-Change Notes:
-* #42 Add OAuth2 support (@alice)
-* #38 Fix null pointer on empty cart (@bob)
-Deployment Steps:
-Merged the main PR, deployment handled automatically via GitHub Actions
-Release Version: ({next_tag})
-Revert Strategy:
-Revert to previous version ({current_tag}){if additional revert steps provided, add a newline followed by the user's input}
-Monitoring and Validation:
-{user_supplied_monitoring}
-```
-
-Also prepare `{github_release_body}` for use in Stage 11, grouped by conventional commit prefix if present (feat, fix, chore, docs, etc). If no prefix is detectable, group under "Changes". Include a link to each PR's URL:
+Prepare `{github_release_body}` for use in Stage 11, grouped by conventional commit prefix if present (feat, fix, chore, docs, etc). If no prefix is detectable, group under "Changes". Include a link to each PR's URL:
 
 ```
 ## Release {next_tag}
@@ -271,6 +227,61 @@ Wait for confirmation of success before continuing.
 ### Stage 9.5 — Create or select Jira version
 
 Now that the release has been merged, set up the Jira version.
+
+**Jira ticket extraction:**
+
+Fetch the final list of all PRs merged into `{dev_branch}` since `{current_tag}`:
+
+```bash
+gh pr list \
+  --repo {repo} \
+  --base {dev_branch} \
+  --state merged \
+  --json number,title,author,mergedAt,body,headRefName \
+  --limit 100
+```
+
+Filter to only PRs where `mergedAt` is after the date of `{current_tag}`. This is the definitive PR list now that the release has been merged.
+
+If no ticket key can be extracted from a PR's title, prompt the user:
+
+```
+Could not find a Jira ticket in the title of PR #{number}: "{title}"
+Enter the Jira ticket key (e.g. ON-1111), or press enter to skip:
+```
+
+If the user provides a key, store it with that PR. If they press enter, mark that PR as having no associated ticket.
+
+Store the full list of extracted ticket keys (deduplicated) as `{jira_tickets}`.
+
+Prompt the user for the following fields to assemble the release body:
+
+```
+Additional revert steps beyond rolling back to {current_tag}? (e.g. db rollback, env update)
+Press enter to skip:
+```
+
+```
+Monitoring and validation strategy?
+(e.g. Test existing scripts on production, monitor through FullStory)
+```
+
+Store the full structured release body as `{jira_release_body}` for use in Stage 11.5:
+
+```
+Service Name:
+[{repo_name}]
+Change Notes:
+* #42 Add OAuth2 support (@alice)
+* #38 Fix null pointer on empty cart (@bob)
+Deployment Steps:
+Merged the main PR, deployment handled automatically via GitHub Actions
+Release Version: ({next_tag})
+Revert Strategy:
+Revert to previous version ({current_tag}){if additional revert steps provided, add a newline followed by the user's input}
+Monitoring and Validation:
+{user_supplied_monitoring}
+```
 
 **If `{release_mode}` is "existing":**
 
