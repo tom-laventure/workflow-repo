@@ -205,38 +205,7 @@ Enter the Jira ticket key (e.g. ON-1111), or press enter to skip:
 
 Store the full deduplicated list of ticket keys as `{jira_tickets}`.
 
-**Step 4 — Collect Jira release body fields:**
-
-Prompt the user:
-
-```
-Additional revert steps beyond rolling back to {current_tag}? (e.g. db rollback, env update)
-Press enter to skip:
-```
-
-```
-Monitoring and validation strategy?
-(e.g. Test existing scripts on production, monitor through FullStory)
-```
-
-Assemble `{jira_release_body}`:
-
-```
-Service Name:
-[{repo_name}]
-Change Notes:
-* #42 Add OAuth2 support (@alice)
-* #38 Fix null pointer on empty cart (@bob)
-Deployment Steps:
-Merged the main PR, deployment handled automatically via GitHub Actions
-Release Version: ({next_tag})
-Revert Strategy:
-Revert to previous version ({current_tag}){if additional revert steps provided, add a newline followed by the user's input}
-Monitoring and Validation:
-{user_supplied_monitoring}
-```
-
-**Step 5 — Create or select the Jira release version:**
+**Step 4 — Create or select the Jira release version:**
 
 If `{jira_release_mode}` is "new":
 
