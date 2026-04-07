@@ -24,7 +24,7 @@ If any of these values are missing, print which fields are absent and exit.
 
 ## Preflight checks
 
-Before Stage 0, run the following credential resolution flow:
+Before Stage 1, run the following credential resolution flow:
 
 ```bash
 SETTINGS_FILE="$HOME/.claude/settings.json"
@@ -80,24 +80,6 @@ If the final guard triggers, print the error and exit. Do not proceed until both
 
 Work through these stages in order. Never skip a stage. After completing each stage, clearly state which stage you are moving to next.
 
-### Stage 0 — New or existing release
-
-Ask the user:
-
-```
-Are you creating a new release or adding services to an existing one?
-  1) New release
-  2) Add to existing release
-```
-
-Accept "1" or "2" (or "new" / "existing"). Store the choice as `{release_mode}`.
-
-**If `{release_mode}` is "existing":** proceed to Stage 1. The Jira version will be selected after the merge in Stage 9.5.
-
-**If `{release_mode}` is "new":** proceed to Stage 1 as normal.
-
----
-
 ### Stage 1 — Fetch latest tag
 
 Run the following command to get the latest tag from the remote:
@@ -123,15 +105,9 @@ git checkout -b {branch_prefix}/{next_tag}
 git push -u origin {branch_prefix}/{next_tag}
 ```
 
-### Stage 4 — Collect merged PRs and build release body
+### Stage 4 — Collect merged PRs and build GitHub release body
 
-Fetch the commit SHA of the last tag so you know where to look from:
-
-```bash
-git rev-list -n 1 {current_tag}
-```
-
-Then fetch all PRs merged into `{dev_branch}` after that commit date. Use the tag's commit date as the lower bound:
+Fetch all PRs merged into `{dev_branch}` since `{current_tag}`:
 
 ```bash
 gh pr list \
@@ -142,7 +118,7 @@ gh pr list \
   --limit 100
 ```
 
-Filter the returned list to only PRs where `mergedAt` is after the date of `{current_tag}`. If no PRs are found, note that in the release body and continue.
+Filter to only PRs where `mergedAt` is after the date of `{current_tag}`. If no PRs are found, note that and continue.
 
 For each qualifying PR, extract:
 - PR number (e.g. #42)
@@ -152,7 +128,7 @@ For each qualifying PR, extract:
 
 Derive `{repo_name}` by taking the part of `{repo}` after the `/` (e.g. `owner/my-service` → `my-service`).
 
-Prepare `{github_release_body}` for use in Stage 11, grouped by conventional commit prefix if present (feat, fix, chore, docs, etc). If no prefix is detectable, group under "Changes". Include a link to each PR's URL:
+Prepare `{github_release_body}` grouped by conventional commit prefix if present (feat, fix, chore, docs, etc). If no prefix is detectable, group under "Changes". Include a link to each PR's URL:
 
 ```
 ## Release {next_tag}
@@ -187,48 +163,21 @@ gh pr create \
 
 Capture and report the PR number and URL from the output.
 
-### Stage 6 — Confirm merge window
+### Stage 6 — Jira release setup
 
-Ask the user when they would like to merge. Accept natural language answers like "now", "in 2 hours", or a specific time. If they say now, proceed immediately to Stage 7. Otherwise, tell them to re-run this script when they are ready to merge and exit gracefully.
+The GitHub PR is open. Before proceeding, set up the Jira release version so that all Jira state is captured before the code goes out.
 
-### Stage 7 — Fetch required approvals from branch protection
+**Step 1 — Ask whether this is a new or existing Jira release version:**
 
-Fetch the branch protection rules for `{main_branch}` directly from GitHub so the required approval count is always accurate:
-
-```bash
-gh api repos/{repo}/branches/{main_branch}/protection \
-  --jq '.required_pull_request_reviews.required_approving_review_count'
+```
+Before merging, let's set up the Jira release. Would you like to:
+  1) Create a new Jira release version
+  2) Add this service to an existing Jira release version
 ```
 
-If the command fails with a 404 it means branch protection is not enabled. In that case treat `required_approvals` as 0 and proceed. If it fails for any other reason, show the error and ask the user to confirm the required count manually before continuing.
+Accept "1" or "2" (or "new" / "existing"). Store the choice as `{jira_release_mode}`.
 
-Store the returned number as `required_approvals`.
-
-### Stage 8 — Check PR approvals
-
-Run the following to check the current approval status:
-
-```bash
-gh pr view {pr_number} --json reviews,reviewDecision,number,title
-```
-
-Parse the output. Count reviews where `state` is `APPROVED`. If the count is less than `required_approvals`, tell the user how many more are needed and stop. Do not proceed until the requirement is met.
-
-### Stage 9 — Merge into main
-
-Use a regular merge (not squash, not rebase) to preserve the release branch commits as reachable ancestors of main. This is critical — squash merging here would create a new SHA that dev cannot trace back to, causing ghost conflicts on every future back-merge.
-
-```bash
-gh pr merge {pr_number} --merge --delete-branch=false
-```
-
-Wait for confirmation of success before continuing.
-
-### Stage 9.5 — Create or select Jira version
-
-Now that the release has been merged, set up the Jira version.
-
-**Jira ticket extraction:**
+**Step 2 — Fetch the PR list for Jira:**
 
 Fetch the final list of all PRs merged into `{dev_branch}` since `{current_tag}`:
 
@@ -237,11 +186,15 @@ gh pr list \
   --repo {repo} \
   --base {dev_branch} \
   --state merged \
-  --json number,title,author,mergedAt,body,headRefName \
+  --json number,title,author,mergedAt,headRefName \
   --limit 100
 ```
 
-Filter to only PRs where `mergedAt` is after the date of `{current_tag}`. This is the definitive PR list now that the release has been merged.
+Filter to only PRs where `mergedAt` is after the date of `{current_tag}`.
+
+**Step 3 — Extract Jira ticket keys:**
+
+For each PR, scan the PR title for the pattern `[{jira_project}-XXXX]` where XXXX is one or more digits. If found, store the key (e.g. `ON-1111`) alongside that PR.
 
 If no ticket key can be extracted from a PR's title, prompt the user:
 
@@ -250,11 +203,11 @@ Could not find a Jira ticket in the title of PR #{number}: "{title}"
 Enter the Jira ticket key (e.g. ON-1111), or press enter to skip:
 ```
 
-If the user provides a key, store it with that PR. If they press enter, mark that PR as having no associated ticket.
+Store the full deduplicated list of ticket keys as `{jira_tickets}`.
 
-Store the full list of extracted ticket keys (deduplicated) as `{jira_tickets}`.
+**Step 4 — Collect Jira release body fields:**
 
-Prompt the user for the following fields to assemble the release body:
+Prompt the user:
 
 ```
 Additional revert steps beyond rolling back to {current_tag}? (e.g. db rollback, env update)
@@ -266,7 +219,7 @@ Monitoring and validation strategy?
 (e.g. Test existing scripts on production, monitor through FullStory)
 ```
 
-Store the full structured release body as `{jira_release_body}` for use in Stage 11.5:
+Assemble `{jira_release_body}`:
 
 ```
 Service Name:
@@ -283,57 +236,17 @@ Monitoring and Validation:
 {user_supplied_monitoring}
 ```
 
-**If `{release_mode}` is "existing":**
+**Step 5 — Create or select the Jira release version:**
 
-Fetch all unreleased Jira versions for the project:
+If `{jira_release_mode}` is "new":
 
-```bash
-curl -s \
-  -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
-  -H "Content-Type: application/json" \
-  "https://{jira_host}/rest/api/3/project/{jira_project}/versions" \
-  | jq '[.[] | select(.released == false) | {id: .id, name: .name}]'
-```
-
-Display the returned list as a numbered menu and ask the user to select one. Store the selected version's `id` as `{jira_version_id}` and its `name` as `{jira_version_name}`. If no unreleased versions are found, inform the user and ask whether to create a new one instead or skip Jira integration.
-
-Fetch the existing version description and append a new service block:
-
-```bash
-curl -s \
-  -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
-  -H "Content-Type: application/json" \
-  "https://{jira_host}/rest/api/3/version/{jira_version_id}" \
-  | jq -r '.description // ""'
-```
-
-Concatenate `{jira_release_body}` onto the existing description with a blank line separator and patch it back:
-
-```bash
-curl -s -X PUT \
-  -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"description\": \"{appended_description}\"
-  }" \
-  "https://{jira_host}/rest/api/3/version/{jira_version_id}"
-```
-
-**If `{release_mode}` is "new":**
-
-Prompt the user for the release name:
+Prompt the user:
 
 ```
-Enter the release name (e.g. PL-Decline Variant C):
+Enter the Jira release name (e.g. New Appflow Variant):
 ```
 
-Store the input as `{release_label}`. Format the full Jira version name as:
-
-```
-[{today_date_formatted}] {release_label}
-```
-
-Where `{today_date_formatted}` is today's date in the format `Mar 24th, 2026`. Generate this with:
+Store the input as `{release_label}`. Format the full Jira version name as `[{today_date_formatted}] {release_label}`. Generate the date with:
 
 ```bash
 python3 -c "
@@ -344,15 +257,15 @@ print(d.strftime('%b') + ' ' + str(d.day) + suffix + ', ' + str(d.year))
 "
 ```
 
-Store the full formatted string as `{jira_version_name}`.
+Store as `{jira_version_name}`.
 
-Prompt the user for a short Jira version description:
+Prompt the user for a one to two line description for the Jira release:
 
 ```
-Enter a one to two line description for the Jira release (e.g. "Adds OAuth2 support and fixes checkout null pointer. No infra changes required."):
+Enter a short description for this Jira release (e.g. "Adds OAuth2 support and fixes checkout null pointer. No infra changes required."):
 ```
 
-Store the input as `{jira_version_description}`.
+Store as `{jira_version_description}`.
 
 Fetch the Jira project ID:
 
@@ -364,7 +277,7 @@ curl -s \
   | jq '.id'
 ```
 
-Store the returned value as `{jira_project_id}`. Then create the Jira version:
+Store as `{jira_project_id}`. Then create the Jira version:
 
 ```bash
 curl -s -X POST \
@@ -380,11 +293,47 @@ curl -s -X POST \
   | jq '{id: .id, name: .name}'
 ```
 
-Store the returned `id` as `{jira_version_id}`. Report the version name to the user.
+Store the returned `id` as `{jira_version_id}`. Report the created Jira version name to the user.
 
-**For both modes — link Jira tickets to the version:**
+If `{jira_release_mode}` is "existing":
 
-For each ticket in `{jira_tickets}`, set its `fixVersions` field to include `{jira_version_id}`:
+Fetch all unreleased Jira versions:
+
+```bash
+curl -s \
+  -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
+  -H "Content-Type: application/json" \
+  "https://{jira_host}/rest/api/3/project/{jira_project}/versions" \
+  | jq '[.[] | select(.released == false) | {id: .id, name: .name}]'
+```
+
+Display as a numbered menu and ask the user to select one. Store the selected version's `id` as `{jira_version_id}` and `name` as `{jira_version_name}`.
+
+Fetch the existing description and append `{jira_release_body}` with a blank line separator:
+
+```bash
+curl -s \
+  -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
+  -H "Content-Type: application/json" \
+  "https://{jira_host}/rest/api/3/version/{jira_version_id}" \
+  | jq -r '.description // ""'
+```
+
+Patch the appended description back:
+
+```bash
+curl -s -X PUT \
+  -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"description\": \"{appended_description}\"
+  }" \
+  "https://{jira_host}/rest/api/3/version/{jira_version_id}"
+```
+
+**Step 6 — Link Jira tickets to the version:**
+
+For each ticket in `{jira_tickets}`:
 
 ```bash
 curl -s -X PUT \
@@ -400,7 +349,34 @@ curl -s -X PUT \
 
 Report each successful link. If a request fails, show the error and ask whether to skip that ticket or abort.
 
-### Stage 10 — Back-merge into dev
+**Step 7 — Wait for manual approval to proceed:**
+
+Print the following and wait for explicit confirmation before continuing:
+
+```
+------------------------------------------------------------
+Jira release version "{jira_version_name}" has been created and tickets have been linked.
+
+The GitHub PR is open at: {pr_url}
+
+Please get the PR approved and confirm you are ready to proceed with the merge.
+Type "proceed" when ready, or "abort" to stop the release:
+------------------------------------------------------------
+```
+
+Accept only "proceed" (case-insensitive) to continue. Accept "abort" to stop the release entirely.
+
+### Stage 7 — Merge into main
+
+Use a regular merge (not squash, not rebase) to preserve the release branch commits as reachable ancestors of main. This is critical — squash merging here would create a new SHA that dev cannot trace back to, causing ghost conflicts on every future back-merge.
+
+```bash
+gh pr merge {pr_number} --merge --delete-branch=false
+```
+
+Wait for confirmation of success before continuing.
+
+### Stage 8 — Back-merge into dev
 
 Use --no-ff to create an explicit merge commit. This keeps main as a reachable ancestor of dev so Git can always find the common base between the two branches. Never use squash here — it would rewrite the SHA and cause Git to treat identical changes as conflicts on future merges.
 
@@ -412,7 +388,7 @@ git merge origin/{main_branch} --no-ff -m "chore: back-merge {next_tag} into {de
 git push origin {dev_branch}
 ```
 
-### Stage 11 — Publish release tag
+### Stage 9 — Publish GitHub release tag
 
 ```bash
 git tag {next_tag} origin/{main_branch}
@@ -425,9 +401,9 @@ gh release create {next_tag} \
 
 Capture the GitHub release URL from the output and store it as `{github_release_url}`.
 
-### Stage 11.5 — Finalise Jira release
+Report to the user that the GitHub release is live at `{github_release_url}` before continuing.
 
-Attach the GitHub release as a Related Work link:
+Then attach the GitHub release to the Jira version as a Related Work link:
 
 ```bash
 curl -s -X POST \
@@ -441,9 +417,7 @@ curl -s -X POST \
   "https://{jira_host}/rest/api/3/version/{jira_version_id}/relatedwork"
 ```
 
-**Transition Jira tickets to Done:**
-
-For each ticket in `{jira_tickets}`, fetch its available transitions:
+Then transition each Jira ticket in `{jira_tickets}` to Done. For each ticket, fetch its available transitions:
 
 ```bash
 curl -s \
@@ -453,7 +427,7 @@ curl -s \
   | jq '[.transitions[] | {id: .id, name: .name}]'
 ```
 
-Find the transition where `name` is `"Done"` and store its `id` as `{done_transition_id}`. Then apply the transition:
+Find the transition where `name` is `"Done"` and apply it:
 
 ```bash
 curl -s -X POST \
@@ -465,45 +439,28 @@ curl -s -X POST \
   "https://{jira_host}/rest/api/3/issue/{ticket}/transitions"
 ```
 
-Report each successful transition. If a transition fails or no "Done" transition is found for a ticket, show the error and ask the user:
+Report each successful transition. If a transition fails or no "Done" transition is found, ask the user:
 
 ```
 Could not transition {ticket} to Done. Skip this ticket and continue, or abort the release? (skip/abort):
 ```
 
-Accept "skip" to continue to the next ticket. Accept "abort" to stop the release entirely.
 
-Then print the following for the engineer to paste manually into the Jira release notes UI:
 
-```
-------------------------------------------------------------
-ACTION REQUIRED: Paste the following into the Jira release notes UI.
-
-Navigate to:
-https://{jira_host}/projects/{jira_project}/versions/{jira_version_id}/tab/release-report-all-issues
-
-Once you are ready, mark the version as released manually in the Jira UI, then click "Release notes" and paste the following into the body:
-
-{jira_release_body}
-------------------------------------------------------------
-```
-
-Wait for the user to confirm they have completed this step before continuing.
-
-### Stage 12 — Delete release branch
+### Stage 10 — Delete release branch
 
 ```bash
 git push origin --delete {branch_prefix}/{next_tag}
 git branch -d {branch_prefix}/{next_tag}
 ```
 
-### Stage 13 — Done
+### Stage 11 — Done
 
 Print a summary:
 - Repository
 - Tag released
 - PR number and URL
-- GitHub release URL
+- GitHub release URL: `{github_release_url}`
 - Jira release URL: `https://{jira_host}/projects/{jira_project}/versions/{jira_version_id}/tab/release-report-all-issues`
 - Jira tickets transitioned to Done: list each ticket key
 
