@@ -100,7 +100,7 @@ Ask the user whether they want a patch, minor, or major bump, and confirm the fi
 Create and push the release branch:
 
 ```bash
-git checkout {main_branch} && git pull origin {main_branch}
+git checkout {dev_branch} && git pull origin {dev_branch}
 git checkout -b {branch_prefix}/{next_tag}
 git push -u origin {branch_prefix}/{next_tag}
 ```
