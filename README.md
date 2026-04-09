@@ -29,4 +29,5 @@ This repository is tagged with the following labels:
 | File | Description |
 |------|-------------|
 | [workflows/release-flow.md](workflows/release-flow.md) | End-to-end production release process including branch creation, Jira version management, PR merge, tagging, and back-merge |
+| [workflows/pr-flow.md](workflows/pr-flow.md) | Feature PR lifecycle: create PR, sync Jira ticket through Code Review and Ready for Deployment, and delete remote branch after merge |
 
