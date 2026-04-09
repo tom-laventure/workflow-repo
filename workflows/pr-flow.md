@@ -160,20 +160,28 @@ Store the result as `{ticket_summary}`. Display it to the user and ask for confi
 
 ### Stage 4 — Generate PR description
 
-List all commits on the feature branch that are not yet in `{base_branch}`:
+Gather the diff of all changes on the feature branch that are not yet in `{base_branch}`:
 
 ```bash
-git log origin/{base_branch}..HEAD --oneline --no-merges
+git diff origin/{base_branch}...HEAD --stat
+git diff origin/{base_branch}...HEAD
 ```
 
-Format each line as a bullet point and store the list as `{commit_list}`.
+Using the diff output, produce a descriptive written summary of what the changes do — not a list of commit messages. The summary should:
+
+- Describe the purpose and effect of the changes in plain English
+- Group related changes together (e.g. "Updated the authentication middleware to...", "Added a new endpoint for...")
+- Note any files or areas of the codebase that were meaningfully affected
+- Avoid listing commit hashes or raw commit messages
+
+Store the summary as `{change_description}`.
 
 Build `{pr_body}` using the following template:
 
 ```
 ## Changes
 
-{commit_list}
+{change_description}
 
 ## Jira Ticket
 
