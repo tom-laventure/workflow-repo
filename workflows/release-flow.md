@@ -167,15 +167,24 @@ Capture and report the PR number and URL from the output.
 
 The GitHub PR is open. Before proceeding, set up the Jira release version so that all Jira state is captured before the code goes out.
 
-**Step 1 — Ask whether this is a new or existing Jira release version:**
+**Step 1 — Ask how to handle the Jira release:**
 
 ```
 Before merging, let's set up the Jira release. Would you like to:
   1) Create a new Jira release version
   2) Add this service to an existing Jira release version
+  3) Skip Jira release setup
 ```
 
-Accept "1" or "2" (or "new" / "existing"). Store the choice as `{jira_release_mode}`.
+Accept "1", "2", or "3" (or "new" / "existing" / "skip"). Store the choice as `{jira_release_mode}`.
+
+If the user chooses "3" / "skip", print:
+
+```
+Skipping Jira release setup. Proceeding to merge approval.
+```
+
+Then jump directly to Step 7.
 
 **Step 2 — Fetch the PR list for Jira:**
 
@@ -278,29 +287,40 @@ curl -s \
 
 Display as a numbered menu and ask the user to select one. Store the selected version's `id` as `{jira_version_id}` and `name` as `{jira_version_name}`.
 
-Fetch the existing description and append `{jira_release_body}` with a blank line separator:
+Do not modify the existing release's name, description, or any other fields. The only changes made to the existing release are those in Steps 5 and 6 below: attaching tickets and attaching the GitHub release link.
 
-```bash
-curl -s \
-  -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
-  -H "Content-Type: application/json" \
-  "https://{jira_host}/rest/api/3/version/{jira_version_id}" \
-  | jq -r '.description // ""'
+**Step 5 — Wait for manual approval to proceed:**
+
+Print the following and wait for explicit confirmation before continuing:
+
+```
+------------------------------------------------------------
+Jira release version "{jira_version_name}" is ready.
+Tickets to be linked: {jira_tickets}
+
+The GitHub PR is open at: {pr_url}
+
+Please get the PR approved and confirm you are ready to proceed with the merge.
+Type "proceed" when ready, or "abort" to stop the release:
+------------------------------------------------------------
 ```
 
-Patch the appended description back:
+Accept only "proceed" (case-insensitive) to continue. Accept "abort" to stop the release entirely.
 
-```bash
-curl -s -X PUT \
-  -H "Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64)" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"description\": \"{appended_description}\"
-  }" \
-  "https://{jira_host}/rest/api/3/version/{jira_version_id}"
+If `{jira_release_mode}` is "skip", the approval prompt should still appear but omit any mention of Jira:
+
+```
+------------------------------------------------------------
+The GitHub PR is open at: {pr_url}
+
+Please get the PR approved and confirm you are ready to proceed with the merge.
+Type "proceed" when ready, or "abort" to stop the release:
+------------------------------------------------------------
 ```
 
 **Step 6 — Link Jira tickets to the version:**
+
+Skip this step entirely if `{jira_release_mode}` is "skip".
 
 For each ticket in `{jira_tickets}`:
 
@@ -317,23 +337,6 @@ curl -s -X PUT \
 ```
 
 Report each successful link. If a request fails, show the error and ask whether to skip that ticket or abort.
-
-**Step 7 — Wait for manual approval to proceed:**
-
-Print the following and wait for explicit confirmation before continuing:
-
-```
-------------------------------------------------------------
-Jira release version "{jira_version_name}" has been created and tickets have been linked.
-
-The GitHub PR is open at: {pr_url}
-
-Please get the PR approved and confirm you are ready to proceed with the merge.
-Type "proceed" when ready, or "abort" to stop the release:
-------------------------------------------------------------
-```
-
-Accept only "proceed" (case-insensitive) to continue. Accept "abort" to stop the release entirely.
 
 ### Stage 7 — Merge into main
 
@@ -371,6 +374,8 @@ gh release create {next_tag} \
 Capture the GitHub release URL from the output and store it as `{github_release_url}`.
 
 Report to the user that the GitHub release is live at `{github_release_url}` before continuing.
+
+Skip the remaining steps in this stage if `{jira_release_mode}` is "skip".
 
 Then attach the GitHub release to the Jira version as a Related Work link:
 
@@ -414,8 +419,6 @@ Report each successful transition. If a transition fails or no "Done" transition
 Could not transition {ticket} to Done. Skip this ticket and continue, or abort the release? (skip/abort):
 ```
 
-
-
 ### Stage 10 — Delete release branch
 
 ```bash
@@ -430,8 +433,9 @@ Print a summary:
 - Tag released
 - PR number and URL
 - GitHub release URL: `{github_release_url}`
-- Jira release URL: `https://{jira_host}/projects/{jira_project}/versions/{jira_version_id}/tab/release-report-all-issues`
-- Jira tickets transitioned to Done: list each ticket key
+- If `{jira_release_mode}` is not "skip":
+  - Jira release URL: `https://{jira_host}/projects/{jira_project}/versions/{jira_version_id}/tab/release-report-all-issues`
+  - Jira tickets transitioned to Done: list each ticket key
 
 Congratulate the user and exit.
 
